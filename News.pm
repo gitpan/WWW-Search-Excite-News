@@ -2,7 +2,7 @@
 # News.pm                                       
 # by Jim Smyser                                       
 # Copyright (c) 1999 by Jim Smyser & USC/ISI          
-# $Id: News.pm,v 2.3 2000/03/21 03:51:02 jims Exp $
+# $Id: News.pm,v 2.04 2000/06/25 03:12:19 jims Exp $
 # Complete copyright notice follows below.            
 ###############################################################
 
@@ -12,8 +12,35 @@ WWW::Search::Excite::News - class for searching ExciteNews
 
 =head1 SYNOPSIS
 
-require WWW::Search;
+use WWW::Search;
+$query = "Bob Hope"; 
 $search = new WWW::Search('Excite::News');
+$search->native_query(WWW::Search::escape_query($query));
+$search->maximum_to_retrieve(100);
+while (my $result = $search->next_result()) {
+
+$url = $result->url;
+$title = $result->title;
+$desc = $result->description;
+$source = $result->source;
+$date = $result->index_date;
+
+print "<a href=$url>$title</a> $source<br>$date<br>$desc<p>\n"; 
+} 
+
+or,
+
+use WWW::Search;
+$query = "Bob Hope"; 
+$search = new WWW::Search('Excite::News');
+$search->native_query(WWW::Search::escape_query($query));
+$search->maximum_to_retrieve(100);
+while (my $result = $search->next_result()) {
+
+$raw = $result->raw;
+
+print "$raw\n"; 
+} 
 
 =head1 DESCRIPTION
 
@@ -21,11 +48,12 @@ Class for searching Excite News F<http://www.excite.com>.
 Excite has one of the best news bot on the web. 
 
 Following results returned for printing are:
-
-$result->{'description'}  will return description if any
-$result->{'source'} articles news source
-$result->{'date'} articles date
-
+$result->url  url for the news article
+$result->title title of the article
+$result->description  will return description if any
+$result->source articles news source
+$result->index_date articles date
+or $result->raw for all the html
 
 This class exports no public interface; all interaction should
 be done through WWW::Search objects.
@@ -57,7 +85,11 @@ Maintained by Jim Smyser <jsmyser@bigfoot.com>
 This module adheres to the C<WWW::Search> test suite mechanism. 
 See $TEST_CASES below.
 
-=head1 VERSION HISTORY
+=head1 CHANGES
+
+=head2 2.04, 2000-06-25
+
+New format changes
 
 =head2 2.03, 2000-03-21
 
@@ -93,7 +125,7 @@ require Exporter;
 @EXPORT = qw();
 @EXPORT_OK = qw();
 @ISA = qw(WWW::Search Exporter);
-$VERSION = '2.03';
+$VERSION = '2.04';
 
 $MAINTAINER = 'Jim Smyser <jsmyser@bigfoot.com>';
 $TEST_CASES = <<"ENDTESTCASES";
@@ -146,7 +178,6 @@ sub native_setup_search
     next if (generic_option($_));
     $options .= $_ . '=' . $options_ref->{$_} . '&';
     }
-  # Yikes, gotta chop the trailing & 
   chop $options;
   # Finally, figure out the url.
   $self->{_next_url} = $self->{_options}{'search_url'} .'?'. $options;
@@ -193,73 +224,59 @@ sub native_retrieve_some
     next if m/^$/;              # short circuit for blank lines
     print STDERR " *** $state ===$_===" if 2 <= $self->{'_debug'};
     
-    if ($state eq $HEADER && m|matches.|i) 
+    if ($state eq $HEADER && m|web news|i) 
       {
-      print STDERR "**Result Count**\n" if 2 <= $self->{'_debug'};
-      $self->approximate_result_count($1);
+      print STDERR "**Result Count**\n" ;
       $state = $HITS;
       }
-    elsif ($state eq $HEADER && m@&nbsp;(\d+)-(\d+)@i) 
-      {
-      print STDERR "**Next Page Header**\n" if 2 <= $self->{'_debug'};
-      $state = $HITS;
-
-      }
-    elsif ($state eq $HITS && m@^<A HREF=.*?;([^"]+)\">$@i) 
+    elsif ($state eq $HITS && m@\<A HREF=.*?;([^"]+)\">(.*)</A>&nbsp;@i) 
       {
       print STDERR "hit url line\n" if 2 <= $self->{'_debug'};
       ($hit, $raw) = $self->begin_new_hit($hit, $raw);
       $raw .= $_;
-      $self->{'_num_hits'}++;
-      $hits_found++;
-      $hit->add_url($1);
-      $state = $TITLE;
-      }
-    if ($state eq $TITLE && m@^(.+)</A>&nbsp;@i) 
-      {
-      $raw .= $_;
-      $hit->title($1);
-      $state = $SOURCE;
-      }
-    elsif ($state eq $HITS && m@^<A HREF=.*?;([^"]+)\">(.*)</A>&nbsp;@i) 
-      {
-      print STDERR "hit url line\n" if 2 <= $self->{'_debug'};
-      ($hit, $raw) = $self->begin_new_hit($hit, $raw);
-      $raw .= $_;
+      $raw =~ s/<ul>|<li>//g;
+      $raw = $raw . "<br>";
       $self->{'_num_hits'}++;
       $hits_found++;
       $hit->add_url($1);
       $hit->title($2);
-      $state = $SOURCE;
-      } 
-    if ($state eq $SOURCE && m@(\((.*))@i) 
-      {
-      print STDERR "**News Source**\n" if 2 <= $self->{'_debug'};
-      $raw .= $_;
-      $hit->score($1);
-      $state = $DESC;
-      } 
-    elsif ($state eq $DESC && m@\<BR>.*?</SMALL>(.*)$@i) 
-      {
-      print STDERR "**Found Description**\n" if 2 <= $self->{'_debug'};
-      $raw .= $_;
-      my ($desc) = $1;
-      $desc =~ s/\s+/ /g;
-      $hit->description($desc);
       $state = $DATE;
       }
-    elsif ($state eq $DATE && m@\<BR>(\<i>(.*))&nbsp;@) 
+    elsif ($state eq $DATE && m@^\<b>(First found:.*?)&nbsp;$@) 
       {
       print STDERR "**Got the Date**\n" if 2 <= $self->{'_debug'};
       $raw .= $_;
+      $raw =  $raw . "<b>From:</b> ";
       $hit->index_date($1);
+      $state = $SOURCE;
+      } 
+    if ($state eq $SOURCE && m@\<b>Source:</b>@i) 
+      {
+      print STDERR "**News Source**\n" ;
+      $state = $SOURCE;
+      } 
+    if ($state eq $SOURCE && m@^(\w.+)@i) 
+      {
+      print STDERR "**News Source**\n" ;
+      $raw .= $_;
+      $raw =  $raw . "<br>";
+      $hit->source($1);
+      $state = $DESC;
+      } 
+    elsif ($state eq $DESC && m@\<font size=-2>(.*)</font><p>@i) 
+      {
+      print STDERR "**Found Description**\n" if 2 <= $self->{'_debug'};
+      $raw .= $_;
+      $raw =~ s/<font.*?>|&nbsp;//ig;
+      my ($desc) = $1;
+      $desc =~ s/\s+|&nbsp;/ /g if ($desc);
+      $hit->description($desc) if (defined($hit));
       $state = $HITS;
       } 
     elsif ($state eq $HITS && m|<INPUT TYPE=submit NAME=next VALUE="Next Results">|i)
       {
       print STDERR "**Going to Next Page**\n" if 2 <= $self->{'_debug'};
       ($hit, $raw) = $self->begin_new_hit($hit, $raw);
-     
       $self->{'_next_to_retrieve'} += $self->{'_hits_per_page'};
       $self->{'_options'}{'start'} = $self->{'_next_to_retrieve'};
       my($options) = '';
@@ -287,3 +304,4 @@ sub native_retrieve_some
       } # native_retrieve_some
       
 1;
+
